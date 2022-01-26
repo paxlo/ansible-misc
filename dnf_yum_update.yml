@@ -1,0 +1,78 @@
+---
+- hosts: all
+  gather_facts: True
+  become: true
+  serial: 1
+  vars_prompt:
+    name: "confirm"
+    prompt: "Are you sure you want to update with reboots? Answer with 'YES'"
+    default: "NO"
+    private: no
+  tasks:
+
+  - name: Check Confirmation
+    fail: msg="You didn't say YES"
+    when: confirm != "YES"
+
+  - name: Check packages for updates
+    shell: yum -y check-update -q | sed '/^[[:space:]]*$/d'
+    changed_when: updates.stdout_lines | length > 0
+    args:
+      warn: false
+    register: updates
+
+  - name: Show packages count
+    debug:
+      msg: "Found {{ updates.stdout_lines | length }} packages need to be updated"
+
+  - when: updates.stdout_lines | length > 0
+    block:
+      - name: Update the system with DNF
+        dnf:
+          name:  "*"
+          state: latest
+        when: ansible_facts['os_family'] == 'RedHat' and ansible_facts  ['distribution_major_version'] >= '8'
+
+      - name: Update the system with Yum
+        yum:
+          name: "*"
+          state: latest
+        when: ansible_facts['os_family'] == 'RedHat' and ansible_facts ['distribution_major_version'] <= '7'
+
+      - name: Reboot required
+        shell: needs-restarting -r
+        register: reboot_required
+        ignore_errors: true
+        changed_when: false
+        failed_when: false
+
+  - when: updates.stdout_lines | length > 0 and reboot_required.rc == 1
+    block:
+      - name: Rebooting
+        reboot:
+          post_reboot_delay: 60
+        throttle: 1
+        ignore_errors: true
+        changed_when: false
+        async: 1
+        poll: 0
+
+      - debug:
+          var: reboot_required.rc
+          verbosity: 2
+
+      - name: Check the uptime post reboot
+        shell: uptime -p
+        register: time_after_reboot
+
+      - debug: msg={{time_after_reboot.stdout}}
+
+      - name: Wait server after reboot
+        wait_for_connection:
+          timeout: 300
+          delay: 20
+        register: reboot_result
+
+      - name: Reboot time
+        debug:
+          msg: "Rebooted in {{ reboot_result.elapsed }} seconds."
