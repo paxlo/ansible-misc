@@ -1,0 +1,28 @@
+---
+- hosts: paxlo
+  tasks:
+  - name: System backup
+    shell: chdir=/tmp/ tar --exclude=/opt/tomcat/logs --exclude=/opt/tomcat/temp --ignore-failed-read -czf /tmp/{{inventory_hostname}}.tgz /etc /opt/tomcat/ ~/.bash_history /var/spool/cron/ /root /var/lib/libvirt
+    ignore_errors: yes
+    args:
+      warn: no
+    tags:
+      - system
+  - name: PG backup
+    shell: pg_basebackup -Ft -R -X fetch -D - | bzip2 > /tmp/pg-{{inventory_hostname}}.tbz2
+    become: yes
+    become_user: postgres
+    ignore_errors: yes
+    tags:
+      - pg
+  - name: Fetching backups to localhost
+    fetch:
+      src: "{{ item }}"
+      dest: /mnt/media/temp/
+      flat: yes
+    with_items:
+      - /tmp/{{inventory_hostname}}.tgz
+      - /tmp/pg-{{inventory_hostname}}.tbz2
+    ignore_errors: yes
+    tags:
+      - fetch
